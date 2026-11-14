@@ -246,3 +246,21 @@ tr:hover td { background: #0b1220; }
   .metrics { flex-direction: column; }
   .topbar { padding: 12px 16px; }
 }
+
+/* ---- chat page ---- */
+.chat-page { max-width: 780px; }
+.chat-card { display: flex; flex-direction: column; height: calc(100vh - 170px); min-height: 480px; padding: 0; overflow: hidden; }
+.chat-head { display: flex; align-items: center; gap: 12px; padding: 16px 20px; border-bottom: 1px solid var(--line); }
+.avatar { width: 40px; height: 40px; border-radius: 50%; background: linear-gradient(135deg, var(--accent), var(--accent2)); display: flex; align-items: center; justify-content: center; font-weight: 700; color: #082f49; }
+.chat-title { font-weight: 700; }
+.chat-sub { font-size: 0.78rem; color: var(--muted); }
+.chat-status { margin-left: auto; font-size: 0.75rem; color: var(--ok); text-transform: uppercase; letter-spacing: 1px; }
+.chat-card .chat { flex: 1; height: auto; border: none; border-radius: 0; margin: 0; }
+.chips { display: flex; gap: 8px; flex-wrap: wrap; padding: 10px 16px; border-top: 1px solid var(--line); }
+.chip { background: #0b1220; border: 1px solid var(--line); color: var(--muted); padding: 6px 12px; border-radius: 999px; cursor: pointer; font-size: 0.78rem; }
+.chip:hover { color: var(--text); border-color: var(--accent); }
+.chat-form { padding: 12px 16px 16px; border-top: none; }
+.typing span { display: inline-block; width: 7px; height: 7px; margin: 0 2px; background: var(--muted); border-radius: 50%; animation: blink 1.2s infinite both; }
+.typing span:nth-child(2) { animation-delay: 0.2s; }
+.typing span:nth-child(3) { animation-delay: 0.4s; }
+@keyframes blink { 0%, 80%, 100% { opacity: 0.2; } 40% { opacity: 1; } }

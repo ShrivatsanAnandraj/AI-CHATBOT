@@ -1,21 +1,7 @@
-// SchoolAI admin panel - same API + demo-mode fallback as the user lab.
+// Shri AI admin panel - real backend calls (password gate on server).
 
 const API = "";
 let authed = sessionStorage.getItem("admin") === "1";
-
-async function api(path, body, method) {
-  try {
-    const res = await fetch(API + path, {
-      method: method || "POST",
-      headers: { "Content-Type": "application/json" },
-      body: body ? JSON.stringify(body) : undefined,
-    });
-    if (!res.ok) throw new Error("bad status");
-    return await res.json();
-  } catch (e) {
-    return null;
-  }
-}
 
 function show(id, html) {
   const el = document.getElementById(id);
@@ -26,6 +12,22 @@ function esc(s) {
   return String(s).replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
 }
 
+async function api(path, body, method) {
+  const res = await fetch(API + path, {
+    method: method || "POST",
+    headers: { "Content-Type": "application/json" },
+    body: body ? JSON.stringify(body) : undefined,
+  });
+  let data = null;
+  try { data = await res.json(); } catch (e) {}
+  if (!res.ok && data && data.error === "unauthorized") {
+    setAuth(false);
+    throw new Error("unauthorized");
+  }
+  if (!res.ok) throw new Error((data && data.error) || "request failed");
+  return data;
+}
+
 // ---------- auth ----------
 function setAuth(on) {
   authed = on;
@@ -34,22 +36,23 @@ function setAuth(on) {
   if (on) { loadStats(); loadSamples(); loadMetricsTable(); }
 }
 async function login() {
-  const u = document.getElementById("admin-user").value;
   const p = document.getElementById("admin-pass").value;
-  const r = await api("/api/admin/login", { username: u, password: p });
-  const ok = r && r.ok ? true : (u === "admin" && p === "admin123"); // demo fallback
-  if (ok) {
+  try {
+    await api("/api/admin/login", { password: p });
     sessionStorage.setItem("admin", "1");
     setAuth(true);
-  } else {
-    show("login-result", '<span class="bad">Wrong username or password.</span>');
+  } catch (e) {
+    show("login-result", '<span class="bad">Wrong password.</span>');
   }
 }
 function logout() {
-  api("/api/admin/logout", {});
+  api("/api/admin/logout", {}).catch(() => {});
   sessionStorage.removeItem("admin");
   setAuth(false);
 }
+document.getElementById("admin-pass").addEventListener("keydown", (e) => {
+  if (e.key === "Enter") login();
+});
 setAuth(authed);
 
 // ---------- tabs ----------
@@ -74,112 +77,44 @@ domainSelect.addEventListener("change", () => {
 
 // ---------- stats / samples ----------
 async function loadStats() {
-  let c = null;
   try {
-    const res = await fetch(API + "/api/admin/stats");
-    if (res.ok) c = await res.json();
+    const c = await api("/api/admin/stats", null, "GET");
+    document.getElementById("s-labeled").textContent = c.labeled;
+    document.getElementById("s-unlabeled").textContent = c.unlabeled;
+    document.getElementById("s-predicted").textContent = c.predicted;
   } catch (e) {}
-  c = c || { labeled: 0, unlabeled: 0, predicted: 0 };
-  document.getElementById("s-labeled").textContent = c.labeled;
-  document.getElementById("s-unlabeled").textContent = c.unlabeled;
-  document.getElementById("s-predicted").textContent = c.predicted;
 }
 
-let samples = [];
 async function loadSamples() {
-  let rows = null;
   try {
-    const res = await fetch(API + "/api/admin/samples");
-    if (res.ok) rows = await res.json();
-  } catch (e) {}
-  samples = rows || [];
-  const tbody = document.querySelector("#samples-table tbody");
-  tbody.innerHTML = samples.length
-    ? ""
-    : '<tr><td colspan="5" style="color:var(--muted)">No samples yet. Add some above.</td></tr>';
-  samples.slice(0, 25).forEach((s) => {
-    const tr = document.createElement("tr");
-    tr.innerHTML =
-      "<td>" + s.id + "</td>" +
-      "<td>" + esc(s.domain) + "</td>" +
-      "<td>" + (s.labeled ? '<span class="ok">labeled</span>' : '<span style="color:var(--muted)">unlabeled</span>') + "</td>" +
-      "<td>" + esc(s.preview) + "</td>" +
-      '<td><button class="ghost" data-del="' + s.id + '">Delete</button></td>';
-    tbody.appendChild(tr);
-  });
-  tbody.querySelectorAll("[data-del]").forEach((b) => {
-    b.addEventListener("click", async () => {
-      await api("/api/admin/samples/" + b.dataset.del, null, "DELETE");
-      samples = samples.filter((x) => String(x.id) !== b.dataset.del);
-      loadSamples(); loadStats();
+    const samples = await api("/api/admin/samples", null, "GET");
+    const tbody = document.querySelector("#samples-table tbody");
+    tbody.innerHTML = samples.length
+      ? ""
+      : '<tr><td colspan="5" style="color:var(--muted)">No samples yet. Add some above.</td></tr>';
+    samples.slice(0, 30).forEach((s) => {
+      const tr = document.createElement("tr");
+      tr.innerHTML =
+        "<td>" + s.id + "</td>" +
+        "<td>" + esc(s.domain) + "</td>" +
+        "<td>" + (s.labeled ? '<span class="ok">labeled: ' + esc(s.label ?? "-") + "</span>"
+                            : '<span style="color:var(--muted)">unlabeled</span>') + "</td>" +
+        "<td>" + esc(s.preview) + "</td>" +
+        '<td><button class="ghost" data-del="' + s.id + '">Delete</button></td>';
+      tbody.appendChild(tr);
     });
-  });
+    tbody.querySelectorAll("[data-del]").forEach((b) => {
+      b.addEventListener("click", async () => {
+        await api("/api/admin/samples/" + b.dataset.del, null, "DELETE");
+        loadSamples(); loadStats();
+      });
+    });
+  } catch (e) {}
 }
 
 // ---------- add sample ----------
-async function addSample() {
-  const domain = domainSelect.value;
-  const labeled = document.getElementById("add-status").value === "labeled";
-  let payload = {}, label = null;
-
-  if (domain === "nlp") {
-    payload = { text: document.getElementById("nlp-in").value.trim() };
-    if (labeled) label = document.getElementById("nlp-label").value;
-  } else if (domain === "ml") {
-    const feats = document.getElementById("ml-in").value.split(",").map((v) => parseFloat(v.trim()));
-    if (feats.length !== 30 || feats.some(isNaN)) {
-      show("add-result", '<span class="bad">ML needs exactly 30 numeric features.</span>');
-      return;
-    }
-    payload = { features: feats };
-    if (labeled) label = document.getElementById("ml-label").value;
-  } else if (domain === "cv" || domain === "dl") {
-    const f = document.getElementById(domain + "-in").files[0];
-    if (!f) { show("add-result", '<span class="bad">Choose an image.</span>'); return; }
-    payload = { image: await imageToPixels(f) };
-    if (labeled) label = document.getElementById(domain + "-label").value;
-  } else if (domain === "ds") {
-    payload = {
-      total_bill: parseFloat(document.getElementById("ds-bill-in").value),
-      size: parseInt(document.getElementById("ds-size-in").value),
-      day: parseInt(document.getElementById("ds-day-in").value),
-      time: parseInt(document.getElementById("ds-time-in").value),
-    };
-    if (labeled) label = document.getElementById("ds-tip-in").value;
-  }
-
-  if (!labeled && domain !== "ds") label = null;
-  if (!payload.text && !payload.features && !payload.image && payload.total_bill == null) {
-    show("add-result", '<span class="bad">Fill in the sample first.</span>');
-    return;
-  }
-
-  const r = await api("/api/admin/samples", { domain, payload, label: labeled ? label : null, labeled });
-  show("add-result", '<span class="ok">Sample saved (' + (labeled ? "labeled" : "unlabeled") + ').</span>');
-  if (!r) {
-    // demo mode: keep a local list so the table still works
-    samples.unshift({
-      id: (samples[0] ? samples[0].id + 1 : 1),
-      domain, labeled,
-      preview: payload.text || (payload.features ? payload.features.slice(0, 4).join(",") + "..." :
-               payload.total_bill != null ? "bill $" + payload.total_bill + " tip " + label :
-               "[image 28x28]"),
-    });
-    const tbody = document.querySelector("#samples-table tbody");
-    if (tbody.textContent.includes("No samples")) tbody.innerHTML = "";
-    const s = samples[0];
-    const tr = document.createElement("tr");
-    tr.innerHTML = "<td>" + s.id + "</td><td>" + s.domain + "</td><td>" +
-      (s.labeled ? "labeled" : "unlabeled") + "</td><td>" + esc(s.preview) + "</td><td></td>";
-    tbody.prepend(tr);
-  } else {
-    loadSamples();
-  }
-  loadStats();
-}
-
 function imageToPixels(file) {
-  return new Promise((resolve) => {
+  return new Promise((resolve, reject) => {
     const img = new Image();
     img.onload = () => {
       const c = document.createElement("canvas");
@@ -187,115 +122,163 @@ function imageToPixels(file) {
       const x = c.getContext("2d");
       x.fillStyle = "#000";
       x.fillRect(0, 0, 28, 28);
-      x.drawImage(img, 0, 0, 28, 28);
+      const s = Math.min(28, 28);
+      x.drawImage(img, (28 - 28) / 2, 0, 28, 28);
       const d = x.getImageData(0, 0, 28, 28).data;
       const out = [];
       for (let i = 0; i < d.length; i += 4) out.push(d[i] / 255);
       resolve(out);
     };
+    img.onerror = reject;
     img.src = URL.createObjectURL(file);
   });
 }
 
-async function loadMLExample(admin) {
-  let row = null;
+async function addSample() {
+  const domain = domainSelect.value;
+  const labeled = document.getElementById("add-status").value === "labeled";
+  let payload = {}, label = null, target = null;
+
   try {
-    const res = await fetch(API + "/api/example/ml");
-    if (res.ok) row = (await res.json()).features;
+    if (domain === "nlp") {
+      payload = { text: document.getElementById("nlp-in").value.trim() };
+      if (labeled) label = document.getElementById("nlp-label").value;
+      if (!payload.text) throw new Error("Enter text.");
+    } else if (domain === "ml") {
+      const feats = document.getElementById("ml-in").value.split(",").map((v) => parseFloat(v.trim()));
+      if (feats.length !== 30 || feats.some(isNaN)) throw new Error("ML needs exactly 30 numeric features.");
+      payload = { features: feats };
+      if (labeled) label = document.getElementById("ml-label").value;
+    } else if (domain === "cv" || domain === "dl") {
+      const f = document.getElementById(domain + "-in").files[0];
+      if (!f) throw new Error("Choose an image.");
+      payload = { pixels: await imageToPixels(f) };
+      if (labeled) label = document.getElementById(domain + "-label").value;
+    } else if (domain === "ds") {
+      payload = {
+        total_bill: parseFloat(document.getElementById("ds-bill-in").value),
+        size: parseInt(document.getElementById("ds-size-in").value),
+        day: parseInt(document.getElementById("ds-day-in").value),
+        time: parseInt(document.getElementById("ds-time-in").value),
+      };
+      if (labeled) target = parseFloat(document.getElementById("ds-tip-in").value);
+    }
+
+    await api("/api/admin/samples", { domain, payload, labeled, label, target });
+    show("add-result", '<span class="ok">Sample saved (' + (labeled ? "labeled" : "unlabeled") + ').</span>');
+    loadSamples();
+    loadStats();
+  } catch (e) {
+    show("add-result", '<span class="bad">' + esc(e.message) + "</span>");
+  }
+}
+
+async function loadMLExample() {
+  try {
+    const r = await fetch("/api/example/ml");
+    if (r.ok) {
+      const row = (await r.json()).features;
+      document.getElementById("ml-in").value = row.join(",");
+      return;
+    }
   } catch (e) {}
-  if (!row) row = [17.99,10.38,122.8,1001,0.1184,0.2776,0.3001,0.1471,0.2419,0.07871,1.095,0.9053,8.589,153.4,0.006399,0.04904,0.05373,0.01587,0.03003,0.006193,25.38,17.33,184.6,2019,0.1622,0.6656,0.7119,0.2654,0.4601,0.1189];
-  document.getElementById("ml-in").value = row.join(",");
+  document.getElementById("ml-in").value =
+    "17.99,10.38,122.8,1001,0.1184,0.2776,0.3001,0.1471,0.2419,0.07871,1.095,0.9053,8.589,153.4,0.006399,0.04904,0.05373,0.01587,0.03003,0.006193,25.38,17.33,184.6,2019,0.1622,0.6656,0.7119,0.2654,0.4601,0.1189";
 }
 
 // ---------- test unlabeled ----------
 async function testUnlabeled() {
   const domain = document.getElementById("test-domain").value;
-  const r = await api("/api/admin/test", { domain });
   const list = document.getElementById("test-list");
-  let items = r && r.items ? r.items : null;
-  if (!items) {
-    // demo mode: invent a couple of plausible unlabeled items
-    items = domain === "nlp"
-      ? [{ id: 1, preview: "what a dull and boring film...", pred: "Negative", conf: 0.71 },
-         { id: 2, preview: "i loved every minute of it!", pred: "Positive", conf: 0.88 }]
-      : [{ id: 1, preview: "[sample data]", pred: "-", conf: 0 }];
-    show("test-result", '<span class="hint">Demo mode - start the backend for real predictions.</span>');
-  } else {
-    show("test-result", '<span class="ok">Tested ' + items.length + " unlabeled sample(s).</span>");
-  }
-  list.innerHTML = "";
-  items.forEach((it) => {
-    const div = document.createElement("div");
-    div.className = "test-item";
-    div.innerHTML =
-      '<div class="pred">Prediction: ' + esc(it.pred) +
-      (it.conf ? " (" + (it.conf * 100).toFixed(1) + "%)" : "") + "</div>" +
-      '<div class="preview-text">' + esc(it.preview) + "</div>" +
-      '<div class="actions">' +
-      '<button class="primary" data-accept="' + it.id + '" data-label="' + esc(it.pred) + '">Accept label</button>' +
-      '<button class="ghost" data-reject="' + it.id + '">Reject / relabel</button>' +
-      "</div>";
-    list.appendChild(div);
-  });
-  list.querySelectorAll("[data-accept]").forEach((b) => {
-    b.addEventListener("click", async () => {
-      await api("/api/admin/samples/" + b.dataset.accept + "/label", { label: b.dataset.label });
-      b.parentElement.parentElement.innerHTML = '<div class="ok">Labeled as ' + esc(b.dataset.label) + ".</div>";
-      loadStats(); loadSamples();
+  try {
+    const r = await api("/api/admin/test", { domain });
+    show("test-result", '<span class="ok">Tested ' + r.items.length + " unlabeled sample(s).</span>");
+    list.innerHTML = "";
+    if (!r.items.length) {
+      list.innerHTML = '<p class="hint">No unlabeled samples for this domain.</p>';
+      return;
+    }
+    r.items.forEach((it) => {
+      const div = document.createElement("div");
+      div.className = "test-item";
+      div.dataset.id = it.id;
+      div.innerHTML =
+        '<div class="pred">Prediction: ' + esc(it.pred) +
+        (it.conf != null ? " (" + (it.conf * 100).toFixed(1) + "%)" : "") + "</div>" +
+        '<div class="preview-text">' + esc(it.preview) + "</div>" +
+        '<div class="actions">' +
+        '<button class="primary" data-accept>Accept label</button>' +
+        '<button class="ghost" data-reject>Reject / relabel</button>' +
+        "</div>";
+      list.appendChild(div);
     });
-  });
-  list.querySelectorAll("[data-reject]").forEach((b) => {
-    b.addEventListener("click", () => {
-      b.parentElement.innerHTML += '<input placeholder="Correct label" style="max-width:220px" />' +
-        '<button class="primary" data-save>Save</button>';
-      b.remove();
-      const wrap = b.parentElement;
-      wrap.querySelector("[data-save]").addEventListener("click", async () => {
-        const v = wrap.querySelector("input").value.trim();
-        if (!v) return;
-        await api("/api/admin/samples/" + wrap.dataset.rid + "/label", { label: v });
-        wrap.innerHTML = '<div class="ok">Saved.</div>';
-        loadStats();
+    list.querySelectorAll("[data-accept]").forEach((b) => {
+      b.addEventListener("click", async () => {
+        const item = b.closest(".test-item");
+        const pred = item.querySelector(".pred").textContent.replace("Prediction: ", "").split(" (")[0];
+        await api("/api/admin/samples/" + item.dataset.id + "/label", { label: pred });
+        item.innerHTML = '<div class="ok">Labeled as ' + esc(pred) + ".</div>";
+        loadStats(); loadSamples();
       });
     });
-  });
+    list.querySelectorAll("[data-reject]").forEach((b) => {
+      b.addEventListener("click", () => {
+        const item = b.closest(".test-item");
+        const actions = item.querySelector(".actions");
+        actions.innerHTML =
+          '<input placeholder="Correct label" style="max-width:220px;margin-top:6px" />' +
+          '<button class="primary" data-save>Save</button>';
+        actions.querySelector("[data-save]").addEventListener("click", async () => {
+          const v = actions.querySelector("input").value.trim();
+          if (!v) return;
+          await api("/api/admin/samples/" + item.dataset.id + "/label", { label: v });
+          actions.innerHTML = '<div class="ok">Saved.</div>';
+          loadStats(); loadSamples();
+        });
+      });
+    });
+  } catch (e) {
+    show("test-result", '<span class="bad">' + esc(e.message) + "</span>");
+  }
 }
 
 // ---------- retrain ----------
+let pollTimer = null;
 async function retrain() {
   const prog = document.getElementById("retrain-progress");
   const bar = document.getElementById("retrain-bar");
   prog.classList.remove("hidden");
-  bar.style.width = "10%";
+  bar.style.width = "5%";
   show("retrain-result", "Training started...");
-  const r = await api("/api/admin/retrain", {});
-  if (r && r.done) {
-    bar.style.width = "100%";
-    show("retrain-result", '<span class="ok">Retrain complete. Metrics updated.</span>');
-    loadMetricsTable();
-  } else {
-    let p = 10;
-    const tick = setInterval(() => {
-      p = Math.min(90, p + 7);
-      bar.style.width = p + "%";
-    }, 700);
-    setTimeout(() => {
-      clearInterval(tick);
-      bar.style.width = "100%";
-      show("retrain-result", '<span class="ok">Demo run finished.</span> Start the backend for a real retrain.');
-    }, 4500);
+  try {
+    await api("/api/admin/retrain", {});
+    if (pollTimer) clearInterval(pollTimer);
+    pollTimer = setInterval(async () => {
+      try {
+        const s = await api("/api/admin/train/status", null, "GET");
+        if (s.total) {
+          bar.style.width = Math.round((s.step / s.total) * 100) + "%";
+          show("retrain-result", "Training " + esc(s.head) + " - step " + s.step + " / " + s.total);
+        }
+        if (s.error) {
+          clearInterval(pollTimer);
+          show("retrain-result", '<span class="bad">Error: ' + esc(s.error) + "</span>");
+        } else if (s.done) {
+          clearInterval(pollTimer);
+          bar.style.width = "100%";
+          show("retrain-result", '<span class="ok">Retrain complete. Metrics updated.</span>');
+          loadMetricsTable();
+        }
+      } catch (e) {}
+    }, 1500);
+  } catch (e) {
+    show("retrain-result", '<span class="bad">' + esc(e.message) + "</span>");
   }
 }
 
 async function loadMetricsTable() {
-  let m = null;
-  try {
-    const res = await fetch(API + "/api/metrics");
-    if (res.ok) m = await res.json();
-  } catch (e) {}
-  m = m || { cv: { accuracy: 0.68, n: 3000 }, dl: { accuracy: 0.84, n: 3000 },
-             nlp: { accuracy: 0.64, n: 2000 }, ml: { accuracy: 0.95, n: 169 },
-             ds: { mae: 0.72, n: 61 } };
+  let m = {};
+  try { m = await fetch("/api/metrics").then((r) => r.json()); } catch (e) {}
   const names = { cv: "Computer Vision", dl: "Deep Learning", nlp: "NLP", ml: "Machine Learning", ds: "Data Science" };
   const tbody = document.querySelector("#metrics-table tbody");
   tbody.innerHTML = "";
