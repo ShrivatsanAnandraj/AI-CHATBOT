@@ -59,7 +59,7 @@ def init_db():
     with SessionLocal() as s:
         if s.scalar(select(Admin).limit(1)) is None:
             username = os.environ.get("ADMIN_USERNAME", "admin")
-            password = os.environ.get("ADMIN_PASSWORD", "openitopen")
+            password = os.environ.get("ADMIN_PASSWORD", "shri@ai")
             s.add(Admin(username=username,
                         password_hash=generate_password_hash(password)))
             s.commit()

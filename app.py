@@ -285,7 +285,7 @@ def api_login():
     # accept either the configured admin account or the direct password
     ok = verify_admin(data.get("username") or os.environ.get(
         "ADMIN_USERNAME", "admin"), password) or password == \
-        os.environ.get("ADMIN_PASSWORD", "openitopen")
+        os.environ.get("ADMIN_PASSWORD", "shri@ai")
     if ok:
         session["admin"] = True
         return jsonify({"ok": True})
