@@ -38,7 +38,11 @@ async function send(text) {
     addMsg(data.reply || "No reply.", "bot");
   } catch (e) {
     t.remove();
-    addMsg("Cannot reach the backend. Start it with: python app.py", "bot");
+    if (location.protocol === "file:") {
+      addMsg("You opened this as a file. Run the server and open http://127.0.0.1:5000/ instead: python app.py", "bot");
+    } else {
+      addMsg("Cannot reach the backend. Start it with: python app.py", "bot");
+    }
   }
 }
 
